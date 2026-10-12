@@ -1,3 +1,4 @@
+
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -20,13 +21,18 @@ from app.routes.background_publishing import router as background_publishing_rou
 from app.social.facebook import router as facebook_router
 from app.social.linkedin import router as linkedin_router
 from app.social.youtube import router as youtube_router
+from app.social.pinterest import router as pinterest_router
+from app.routes.notifications import router as notifications_router
 
 app = FastAPI(
     title="SocialPilot API",
     version="1.0.0",
 )
 
+
 start_scheduler()
+
+
 # ============================================================
 # UPLOADS
 # ============================================================
@@ -63,7 +69,13 @@ app.add_middleware(
 app.include_router(auth_router)
 app.include_router(users_router)
 app.include_router(social_accounts_router)
+
 app.include_router(instagram_router)
+app.include_router(facebook_router)
+app.include_router(linkedin_router)
+app.include_router(youtube_router)
+app.include_router(pinterest_router)
+
 app.include_router(posts_router)
 app.include_router(publishing_logs_router)
 app.include_router(publishing_router)
@@ -72,9 +84,10 @@ app.include_router(campaigns_router)
 app.include_router(uploads_router)
 app.include_router(instagram_insights_router)
 app.include_router(background_publishing_router)
-app.include_router(facebook_router)
-app.include_router(linkedin_router)
-app.include_router(youtube_router)
+
+app.include_router(notifications_router)
+
+
 # ============================================================
 # ROOT
 # ============================================================
@@ -96,3 +109,4 @@ def health():
         "status": "healthy",
         "service": "SocialPilot Backend",
     }
+

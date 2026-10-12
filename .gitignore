@@ -36,4 +36,15 @@ Thumbs.db
 
 # IDE
 .vscode/
-.idea/
+.idea/backend/venv/
+backend/venv-incomplete-backup/
+backend.env
+backend/.env
+.env
+.env.*
+!.env.example
+node_modules/
+.next/
+__pycache__/
+
+t-Path backend.env

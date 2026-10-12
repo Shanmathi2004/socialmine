@@ -14,38 +14,75 @@ from app.database.connection import get_db
 from app.security.dependencies import get_current_user
 from app.models.social_account import SocialAccount
 
+
 load_dotenv()
+
+
+# =========================================================
+# YouTube OAuth Configuration
+# =========================================================
 
 YOUTUBE_CLIENT_ID = os.getenv("YOUTUBE_CLIENT_ID")
 YOUTUBE_CLIENT_SECRET = os.getenv("YOUTUBE_CLIENT_SECRET")
 YOUTUBE_REDIRECT_URI = os.getenv("YOUTUBE_REDIRECT_URI")
-FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 
-GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
-GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
-YOUTUBE_CHANNELS_URL = "https://www.googleapis.com/youtube/v3/channels"
+FRONTEND_URL = os.getenv(
+    "FRONTEND_URL",
+    "http://localhost:3000",
+)
+
+YOUTUBE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
+YOUTUBE_TOKEN_URL = "https://oauth2.googleapis.com/token"
+
+YOUTUBE_USERINFO_URL = (
+    "https://www.googleapis.com/oauth2/v3/userinfo"
+)
+
+YOUTUBE_API_URL = (
+    "https://www.googleapis.com/youtube/v3"
+)
+
+
+# =========================================================
+# Router
+# =========================================================
 
 router = APIRouter(
     prefix="/api/social/youtube",
     tags=["YouTube"],
 )
 
-# Temporary OAuth state storage.
-# This works while the same FastAPI process remains running.
+
+# =========================================================
+# Temporary OAuth State Storage
+# =========================================================
+
 oauth_states: dict[str, int] = {}
 
+
+# =========================================================
+# Redirect Helper
+# =========================================================
 
 def redirect_to_social_accounts(
     status: str,
     message: str | None = None,
 ):
-    url = f"{FRONTEND_URL}/dashboard/social-accounts?youtube={status}"
+    url = (
+        f"{FRONTEND_URL}"
+        f"/dashboard/social-accounts"
+        f"?youtube={status}"
+    )
 
     if message:
         url += f"&message={quote(message)}"
 
     return RedirectResponse(url=url)
 
+
+# =========================================================
+# Start YouTube OAuth
+# =========================================================
 
 @router.get("/login")
 def youtube_login(
@@ -54,48 +91,61 @@ def youtube_login(
     if not YOUTUBE_CLIENT_ID:
         raise HTTPException(
             status_code=500,
-            detail="YouTube Client ID is not configured.",
+            detail="YOUTUBE_CLIENT_ID is not configured.",
         )
 
     if not YOUTUBE_CLIENT_SECRET:
         raise HTTPException(
             status_code=500,
-            detail="YouTube Client Secret is not configured.",
+            detail="YOUTUBE_CLIENT_SECRET is not configured.",
         )
 
     if not YOUTUBE_REDIRECT_URI:
         raise HTTPException(
             status_code=500,
-            detail="YouTube Redirect URI is not configured.",
+            detail="YOUTUBE_REDIRECT_URI is not configured.",
         )
 
+    # Create OAuth state
     state = secrets.token_urlsafe(32)
 
+    # Associate state with logged-in SocialPilot user
     oauth_states[state] = current_user.id
+
+    # YouTube / Google OAuth scopes
+    scope = " ".join(
+        [
+            "openid",
+            "https://www.googleapis.com/auth/userinfo.profile",
+            "https://www.googleapis.com/auth/userinfo.email",
+            "https://www.googleapis.com/auth/youtube.readonly",
+            "https://www.googleapis.com/auth/youtube.upload",
+        ]
+    )
 
     params = {
         "client_id": YOUTUBE_CLIENT_ID,
         "redirect_uri": YOUTUBE_REDIRECT_URI,
         "response_type": "code",
-       "scope": "https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly",
+        "scope": scope,
         "access_type": "offline",
         "prompt": "consent",
         "state": state,
     }
 
-    login_url = f"{GOOGLE_AUTH_URL}?{urlencode(params)}"
-
-    print("========================================")
-    print("YouTube OAuth started")
-    print("User ID:", current_user.id)
-    print("Redirect URI:", YOUTUBE_REDIRECT_URI)
-    print("OAuth state created:", state)
-    print("========================================")
+    login_url = (
+        f"{YOUTUBE_AUTH_URL}?"
+        f"{urlencode(params)}"
+    )
 
     return {
-        "login_url": login_url,
+        "login_url": login_url
     }
 
+
+# =========================================================
+# YouTube OAuth Callback
+# =========================================================
 
 @router.get("/callback")
 def youtube_callback(
@@ -105,12 +155,9 @@ def youtube_callback(
     error_description: str | None = None,
     db: Session = Depends(get_db),
 ):
-    print("========================================")
-    print("YouTube OAuth callback received")
-    print("Code received:", bool(code))
-    print("State received:", bool(state))
-    print("Google error:", error)
-    print("========================================")
+    # -----------------------------------------------------
+    # Google returned an OAuth error
+    # -----------------------------------------------------
 
     if error:
         return redirect_to_social_accounts(
@@ -118,11 +165,19 @@ def youtube_callback(
             error_description or error,
         )
 
+    # -----------------------------------------------------
+    # Validate authorization code
+    # -----------------------------------------------------
+
     if not code:
         return redirect_to_social_accounts(
             "error",
             "YouTube authorization code is missing.",
         )
+
+    # -----------------------------------------------------
+    # Validate OAuth state
+    # -----------------------------------------------------
 
     if not state:
         return redirect_to_social_accounts(
@@ -131,26 +186,20 @@ def youtube_callback(
         )
 
     if state not in oauth_states:
-        print("ERROR: OAuth state was not found.")
-        print("Received state:", state)
-        print("Available states:", list(oauth_states.keys()))
-
         return redirect_to_social_accounts(
             "error",
-            "Invalid or expired YouTube OAuth state. Please start the connection again.",
+            "Invalid or expired YouTube OAuth state.",
         )
 
     user_id = oauth_states.pop(state)
 
-    print("YouTube OAuth belongs to user ID:", user_id)
-
-    # --------------------------------------------------
-    # EXCHANGE GOOGLE CODE FOR TOKENS
-    # --------------------------------------------------
+    # -----------------------------------------------------
+    # Exchange authorization code for tokens
+    # -----------------------------------------------------
 
     try:
         token_response = requests.post(
-            GOOGLE_TOKEN_URL,
+            YOUTUBE_TOKEN_URL,
             data={
                 "code": code,
                 "client_id": YOUTUBE_CLIENT_ID,
@@ -160,29 +209,20 @@ def youtube_callback(
             },
             timeout=30,
         )
-    except requests.RequestException as exc:
-        print("Google token request failed:", repr(exc))
 
+    except requests.RequestException:
         return redirect_to_social_accounts(
             "error",
             "Unable to connect to Google.",
         )
 
-    print("Google token response status:", token_response.status_code)
-
     if not token_response.ok:
-        print("Google token response:", token_response.text)
-
         return redirect_to_social_accounts(
             "error",
             "YouTube token exchange failed.",
         )
 
     token_data = token_response.json()
-
-    print("Google token received.")
-    print("Access token present:", bool(token_data.get("access_token")))
-    print("Refresh token present:", bool(token_data.get("refresh_token")))
 
     access_token = token_data.get("access_token")
     refresh_token = token_data.get("refresh_token")
@@ -194,42 +234,83 @@ def youtube_callback(
             "YouTube access token was not returned.",
         )
 
+    # -----------------------------------------------------
+    # Calculate token expiry
+    # -----------------------------------------------------
+
     token_expires_at = None
 
     if expires_in:
-        token_expires_at = datetime.now(timezone.utc) + timedelta(
-            seconds=int(expires_in)
+        token_expires_at = (
+            datetime.now(timezone.utc)
+            + timedelta(seconds=int(expires_in))
         )
 
-    # --------------------------------------------------
-    # GET YOUTUBE CHANNEL
-    # --------------------------------------------------
+    # -----------------------------------------------------
+    # Get Google profile
+    # -----------------------------------------------------
+
+    try:
+        userinfo_response = requests.get(
+            YOUTUBE_USERINFO_URL,
+            headers={
+                "Authorization": f"Bearer {access_token}"
+            },
+            timeout=30,
+        )
+
+    except requests.RequestException:
+        return redirect_to_social_accounts(
+            "error",
+            "Unable to retrieve Google profile.",
+        )
+
+    if not userinfo_response.ok:
+        return redirect_to_social_accounts(
+            "error",
+            "Unable to retrieve Google profile.",
+        )
+
+    userinfo = userinfo_response.json()
+
+    google_user_id = userinfo.get("sub")
+
+    if not google_user_id:
+        return redirect_to_social_accounts(
+            "error",
+            "Google user ID was not returned.",
+        )
+
+    google_name = (
+        userinfo.get("name")
+        or userinfo.get("email")
+        or "YouTube User"
+    )
+
+    # -----------------------------------------------------
+    # Get YouTube channel
+    # -----------------------------------------------------
 
     try:
         channel_response = requests.get(
-            YOUTUBE_CHANNELS_URL,
-            headers={
-                "Authorization": f"Bearer {access_token}",
-            },
+            f"{YOUTUBE_API_URL}/channels",
             params={
                 "part": "snippet",
                 "mine": "true",
             },
+            headers={
+                "Authorization": f"Bearer {access_token}"
+            },
             timeout=30,
         )
-    except requests.RequestException as exc:
-        print("YouTube channel request failed:", repr(exc))
 
+    except requests.RequestException:
         return redirect_to_social_accounts(
             "error",
             "Unable to retrieve YouTube channel.",
         )
 
-    print("YouTube channel response status:", channel_response.status_code)
-
     if not channel_response.ok:
-        print("YouTube channel response:", channel_response.text)
-
         return redirect_to_social_accounts(
             "error",
             "Unable to retrieve YouTube channel.",
@@ -237,23 +318,25 @@ def youtube_callback(
 
     channel_data = channel_response.json()
 
-    print("YouTube channel response:", channel_data)
+    channels = channel_data.get("items", [])
 
-    items = channel_data.get("items", [])
-
-    if not items:
+    if not channels:
         return redirect_to_social_accounts(
             "error",
             "No YouTube channel was found for this Google account.",
         )
 
-    channel = items[0]
+    channel = channels[0]
 
     channel_id = channel.get("id")
 
     snippet = channel.get("snippet", {})
 
-    channel_title = snippet.get("title") or "YouTube Channel"
+    channel_title = (
+        snippet.get("title")
+        or google_name
+        or "YouTube Channel"
+    )
 
     if not channel_id:
         return redirect_to_social_accounts(
@@ -261,74 +344,79 @@ def youtube_callback(
             "YouTube channel ID was not returned.",
         )
 
-    print("YouTube channel found:")
-    print("Channel ID:", channel_id)
-    print("Channel title:", channel_title)
+    # -----------------------------------------------------
+    # Check existing YouTube account
+    # -----------------------------------------------------
 
-    # --------------------------------------------------
-    # SAVE / UPDATE SOCIAL ACCOUNT
-    # --------------------------------------------------
+    existing_account = (
+        db.query(SocialAccount)
+        .filter(
+            SocialAccount.user_id == user_id,
+            SocialAccount.platform == "youtube",
+            SocialAccount.platform_user_id == channel_id,
+        )
+        .first()
+    )
 
-    try:
-        existing_account = (
-            db.query(SocialAccount)
-            .filter(
-                SocialAccount.user_id == user_id,
-                SocialAccount.platform == "youtube",
-                SocialAccount.platform_user_id == channel_id,
-            )
-            .first()
+    # -----------------------------------------------------
+    # Update existing account
+    # -----------------------------------------------------
+
+    if existing_account:
+
+        existing_account.access_token = access_token
+
+        if refresh_token:
+            existing_account.refresh_token = refresh_token
+
+        existing_account.token_expires_at = token_expires_at
+
+        existing_account.platform_username = channel_title
+
+        existing_account.display_name = channel_title
+
+        existing_account.status = "connected"
+
+    # -----------------------------------------------------
+    # Create new account
+    # -----------------------------------------------------
+
+    else:
+
+        youtube_account = SocialAccount(
+            user_id=user_id,
+            platform="youtube",
+            platform_user_id=channel_id,
+            platform_username=channel_title,
+            display_name=channel_title,
+            access_token=access_token,
+            refresh_token=refresh_token,
+            token_expires_at=token_expires_at,
+            status="connected",
         )
 
-        if existing_account:
-            print("Updating existing YouTube account:", existing_account.id)
+        db.add(youtube_account)
 
-            existing_account.access_token = access_token
+    # -----------------------------------------------------
+    # Save to database
+    # -----------------------------------------------------
 
-            if refresh_token:
-                existing_account.refresh_token = refresh_token
-
-            existing_account.platform_username = channel_title
-            existing_account.display_name = channel_title
-            existing_account.token_expires_at = token_expires_at
-            existing_account.status = "connected"
-
-        else:
-            print("Creating new YouTube SocialAccount")
-
-            youtube_account = SocialAccount(
-                user_id=user_id,
-                platform="youtube",
-                platform_user_id=channel_id,
-                platform_username=channel_title,
-                display_name=channel_title,
-                access_token=access_token,
-                refresh_token=refresh_token,
-                token_expires_at=token_expires_at,
-                status="connected",
-            )
-
-            db.add(youtube_account)
-
+    try:
         db.commit()
 
-        print("YouTube SocialAccount saved successfully.")
-
-    except Exception as exc:
+    except Exception:
         db.rollback()
-
-        print("========================================")
-        print("DATABASE ERROR WHILE SAVING YOUTUBE")
-        print(repr(exc))
-        print("========================================")
 
         return redirect_to_social_accounts(
             "error",
-            "Unable to save YouTube account. Check the backend terminal.",
+            "Unable to save YouTube account.",
         )
+
+    # -----------------------------------------------------
+    # Success
+    # -----------------------------------------------------
 
     return redirect_to_social_accounts(
         "connected",
         "YouTube account connected successfully.",
     )
-
