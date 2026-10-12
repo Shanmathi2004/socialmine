@@ -1,19 +1,24 @@
+
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey
+from sqlalchemy import (
+    Column,
+    Integer,
+    String,
+    Text,
+    DateTime,
+    ForeignKey,
+    Float,
+)
 from sqlalchemy.orm import relationship
-from sqlalchemy import Float
+
 from app.database.connection import Base
 
 
 class Campaign(Base):
     __tablename__ = "campaigns"
 
-    id = Column(
-        Integer,
-        primary_key=True,
-        index=True,
-    )
+    id = Column(Integer, primary_key=True, index=True)
 
     user_id = Column(
         Integer,
@@ -22,31 +27,17 @@ class Campaign(Base):
         index=True,
     )
 
-    name = Column(
-        String(255),
-        nullable=False,
-    )
+    name = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
 
-    description = Column(
-        Text,
-        nullable=True,
-    )
+    # Campaign details
+    platform = Column(String(50), nullable=True)
+    objectives = Column(Text, nullable=True)
 
-    status = Column(
-        String(50),
-        nullable=False,
-        default="draft",
-    )
+    status = Column(String(50), nullable=False, default="draft")
 
-    start_date = Column(
-        DateTime(timezone=True),
-        nullable=True,
-    )
-
-    end_date = Column(
-        DateTime(timezone=True),
-        nullable=True,
-    )
+    start_date = Column(DateTime(timezone=True), nullable=True)
+    end_date = Column(DateTime(timezone=True), nullable=True)
 
     created_at = Column(
         DateTime(timezone=True),
@@ -61,23 +52,10 @@ class Campaign(Base):
         onupdate=lambda: datetime.now(timezone.utc),
     )
 
-    user = relationship(
-        "User",
-        back_populates="campaigns",
-    )
+    # Financial tracking
+    budget = Column(Float, nullable=False, default=0)
+    revenue = Column(Float, nullable=False, default=0)
 
-    posts = relationship(
-        "Post",
-        back_populates="campaign",
-    )
-    budget = Column(
-        Float,
-        nullable=False,
-        default=0,
-    )
-
-    revenue = Column(
-        Float,
-        nullable=False,
-        default=0,
-    )
+    # Existing relationships — preserved
+    user = relationship("User", back_populates="campaigns")
+    posts = relationship("Post", back_populates="campaign")
