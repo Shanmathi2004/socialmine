@@ -1,4 +1,3 @@
-
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
@@ -30,41 +29,48 @@ def notification_to_dict(notification: Notification):
 @router.get("/")
 def get_notifications(
     unread_only: bool = Query(False),
-    limit: int = Query(50, ge=1, le=100),
+    limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    query = db.query(Notification).filter(
+    base_query = db.query(Notification).filter(
         Notification.user_id == current_user.id
     )
 
+    all_count = base_query.count()
+
+    unread_count = base_query.filter(
+        Notification.is_read.is_(False)
+    ).count()
+
+    query = base_query
+
     if unread_only:
-        query = query.filter(Notification.is_read.is_(False))
+        query = query.filter(
+            Notification.is_read.is_(False)
+        )
 
     total = query.count()
 
-    notifications = (
-        query.order_by(Notification.created_at.desc())
+    items = (
+        query.order_by(
+            Notification.created_at.desc(),
+            Notification.id.desc(),
+        )
         .offset(offset)
         .limit(limit)
         .all()
     )
 
-    unread_count = (
-        db.query(Notification)
-        .filter(
-            Notification.user_id == current_user.id,
-            Notification.is_read.is_(False),
-        )
-        .count()
-    )
-
     return {
         "total": total,
+        "all_count": all_count,
         "unread_count": unread_count,
+        "limit": limit,
+        "offset": offset,
         "notifications": [
-            notification_to_dict(item) for item in notifications
+            notification_to_dict(item) for item in items
         ],
     }
 
@@ -107,9 +113,10 @@ def mark_notification_as_read(
             detail="Notification not found.",
         )
 
-    notification.is_read = True
-    db.commit()
-    db.refresh(notification)
+    if not notification.is_read:
+        notification.is_read = True
+        db.commit()
+        db.refresh(notification)
 
     return {
         "message": "Notification marked as read.",
@@ -137,7 +144,7 @@ def mark_all_notifications_as_read(
     db.commit()
 
     return {
-        "message": "All notifications marked as read.",
+        "message": "Notifications marked as read.",
         "updated_count": updated_count,
     }
 
@@ -166,4 +173,6 @@ def delete_notification(
     db.delete(notification)
     db.commit()
 
-    return {"message": "Notification deleted successfully."}
+    return {
+        "message": "Notification deleted successfully."
+    }
